@@ -1,0 +1,38 @@
+name: codeql
+
+# CodeQL static analysis for Python. Mirrors the local `make codeql`; results appear in the
+# repository's Security tab. No secrets required.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "27 3 * * 1"  # weekly (Mondays)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  packages: read
+
+jobs:
+  analyze:
+    # Code-scanning upload needs a public repo (or GitHub Advanced Security). Skip while the repo
+    # is private; this activates automatically once it becomes public.
+    if: github.event.repository.visibility != 'private'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          build-mode: none
+          queries: security-and-quality
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:python"
