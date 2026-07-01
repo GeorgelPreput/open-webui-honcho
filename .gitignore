@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Quality/security suite outputs (make lint/typecheck/test/scan)
+reports/
+
+# Environment / secrets — NEVER commit the real token
+.env
+*.env
+!*.env.example
+.dev.vars
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Local agent config (Claude Code project settings)
+.claude/

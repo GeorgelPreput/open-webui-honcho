@@ -1,0 +1,88 @@
+name: docker
+
+# Build a single-arch (amd64) image, smoke-test /health, and push to Docker Hub.
+# On pull requests it builds + smoke-tests only (no login/push, no secrets needed). Pushing to
+# main / v* tags publishes the image and requires repo secrets DOCKERHUB_USERNAME, DOCKERHUB_TOKEN.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Publish under your own namespace by setting the repo variable IMAGE_NAME
+  # (e.g. youruser/open-webui-honcho); falls back to the upstream image otherwise.
+  IMAGE: ${{ vars.IMAGE_NAME || 'georgelpreput/open-webui-honcho' }}
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker metadata (tags/labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Build once, load locally, and smoke-test /health before pushing.
+      - name: Build (load for smoke test)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          load: true
+          tags: open-webui-honcho:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test /health
+        run: |
+          docker run -d --name smoke -p 8000:8000 open-webui-honcho:smoke
+          ok=""
+          for _ in $(seq 1 20); do
+            if curl -fsS http://localhost:8000/health; then echo " -> health OK"; ok=1; break; fi
+            sleep 1
+          done
+          docker logs smoke || true
+          docker rm -f smoke >/dev/null 2>&1 || true
+          test "$ok" = "1"
+
+      - name: Build and push
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+
+      - name: Sync Docker Hub description from README
+        if: github.ref == 'refs/heads/main'
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.IMAGE }}
+          readme-filepath: ./README.md

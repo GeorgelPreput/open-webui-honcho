@@ -1,0 +1,26 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.1.0
+    hooks:
+      - id: mypy
+        files: ^(src/|functions/|scripts/)
+        additional_dependencies:
+          - pydantic>=2.9
+          - pydantic-settings>=2.6
+          - httpx>=0.27
+          - fastapi>=0.115
+  - repo: https://github.com/pypa/pip-audit
+    rev: v2.10.1
+    hooks:
+      - id: pip-audit
+        args: ["."]
+
+ci:
+  # pip-audit needs network access pre-commit.ci does not allow; run it locally only.
+  skip: [pip-audit]

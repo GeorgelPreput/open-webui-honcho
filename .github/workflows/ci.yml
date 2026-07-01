@@ -1,0 +1,41 @@
+name: ci
+
+# Lint, format, type-check, and test. No secrets required — runs on every PR.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv + Python
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install (dev extras)
+        run: uv sync --extra dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check src functions tests scripts
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check src functions tests scripts
+
+      - name: Type check (mypy)
+        run: uv run mypy src/open_webui_honcho functions/honcho_memory_filter.py scripts
+
+      - name: Filter prompt is in sync with the policy
+        run: uv run python scripts/build_filter.py --check
+
+      - name: Test (pytest)
+        run: uv run pytest -q

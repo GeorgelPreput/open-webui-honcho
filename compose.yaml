@@ -1,0 +1,18 @@
+# Local / reference compose for the honcho-tools sidecar.
+#
+# For local development: copy .env.example to .env, set HONCHO_API_KEY (and HONCHO_BASE_URL if
+# self-hosting), then `docker compose up --build`. In a real deployment, run this alongside your
+# Open WebUI on the same Docker network so its backend can reach http://honcho-tools:8000.
+
+services:
+  honcho-tools:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: open-webui-honcho:dev
+    container_name: honcho-tools
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
