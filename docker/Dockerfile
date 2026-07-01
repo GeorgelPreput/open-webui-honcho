@@ -1,4 +1,4 @@
-# Honcho OpenAPI tool server image (linux/amd64; pure-Python).
+# Honcho OpenAPI tool server image (multi-arch: linux/amd64 + linux/arm64; pure-Python).
 FROM python:3.12-slim
 
 # uv for fast, reproducible installs.

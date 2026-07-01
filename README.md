@@ -121,14 +121,14 @@ uv run pre-commit run --all-files
 
 ## Docker image
 
-The published image is on Docker Hub — **[`georgelpreput/open-webui-honcho`](https://hub.docker.com/r/georgelpreput/open-webui-honcho)**. Pull and run it:
+The published image is on Docker Hub — **[`georgelpreput/open-webui-honcho`](https://hub.docker.com/r/georgelpreput/open-webui-honcho)** (multi-arch: `linux/amd64` + `linux/arm64`). Pull and run it:
 
 ```bash
 docker pull georgelpreput/open-webui-honcho
 docker run --rm -p 8000:8000 -e HONCHO_API_KEY=... georgelpreput/open-webui-honcho
 ```
 
-Or build it yourself (`linux/amd64`, pure-Python):
+Or build it yourself (pure-Python; add `buildx --platform linux/amd64,linux/arm64` for multi-arch):
 
 ```bash
 docker build -f docker/Dockerfile -t open-webui-honcho .
