@@ -1,0 +1,15 @@
+# Keep the build context minimal — the Dockerfile only needs pyproject.toml, README.md, src/.
+.git/
+.github/
+.venv/
+**/__pycache__/
+**/*.pyc
+.env
+.env.*
+!.env.example
+functions/
+scripts/
+tests/
+docker/
+compose.yaml
+PLAN.md
