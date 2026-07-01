@@ -6,6 +6,9 @@ memory-usage policy. Because the memory lives in a Honcho workspace (not in Open
 **shared** with any other Honcho client the user runs (e.g. the Claude Code / Cursor / OpenCode
 memory plugin): what Open WebUI learns is available there, and vice-versa.
 
+**Source:** [github.com/GeorgelPreput/open-webui-honcho](https://github.com/GeorgelPreput/open-webui-honcho)
+· **Image:** [`georgelpreput/open-webui-honcho`](https://hub.docker.com/r/georgelpreput/open-webui-honcho) on Docker Hub
+
 ## How it works
 
 Two components share one Honcho client:
@@ -116,27 +119,32 @@ uv run pre-commit install
 uv run pre-commit run --all-files
 ```
 
-## Docker image & CI
+## Docker image
 
-`docker/Dockerfile` builds the sidecar (`linux/amd64`, pure-Python). The GitHub Actions workflow
-(`.github/workflows/docker.yml`) builds, smoke-tests `/health`, and pushes to Docker Hub on
-pushes to `main` / `v*` tags. Configure:
+The published image is on Docker Hub — **[`georgelpreput/open-webui-honcho`](https://hub.docker.com/r/georgelpreput/open-webui-honcho)**. Pull and run it:
 
-- repo secrets `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`;
-- optional repo variable `IMAGE_NAME` (e.g. `youruser/open-webui-honcho`) to publish under your
-  own namespace.
+```bash
+docker pull georgelpreput/open-webui-honcho
+docker run --rm -p 8000:8000 -e HONCHO_API_KEY=... georgelpreput/open-webui-honcho
+```
+
+Or build it yourself (`linux/amd64`, pure-Python):
 
 ```bash
 docker build -f docker/Dockerfile -t open-webui-honcho .
-docker run --rm -p 8000:8000 -e HONCHO_API_KEY=... open-webui-honcho
 ```
+
+**CI:** `.github/workflows/docker.yml` builds, smoke-tests `/health`, and pushes to Docker Hub on
+`main` / `v*` tags — via repo secrets `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` and the optional
+`IMAGE_NAME` variable (to publish under your own namespace).
 
 ## Deploy to Open WebUI
 
-1. **Run the sidecar** where Open WebUI's backend can reach it (the simplest option is the same
-   Docker network, e.g. reachable as `http://honcho-tools:8000`). Provide its environment (at
-   least `HONCHO_API_KEY`, and `HONCHO_BASE_URL` if self-hosting; set `TOOL_SERVER_API_KEY` to
-   require a bearer).
+1. **Run the sidecar** — the [`georgelpreput/open-webui-honcho`](https://hub.docker.com/r/georgelpreput/open-webui-honcho)
+   image — where Open WebUI's backend can reach it (the simplest option is the same Docker
+   network, e.g. reachable as `http://honcho-tools:8000`). Provide its environment (at least
+   `HONCHO_API_KEY`, and `HONCHO_BASE_URL` if self-hosting; set `TOOL_SERVER_API_KEY` to require
+   a bearer).
 2. **Register the tool server** — *Admin Settings → Tools* → add the sidecar URL, type OpenAPI,
    Bearer = `TOOL_SERVER_API_KEY`, and Custom Headers
    `{"X-Honcho-User-Email":"{{USER_EMAIL}}","X-Honcho-Chat-Id":"{{CHAT_ID}}"}`. Registering it
