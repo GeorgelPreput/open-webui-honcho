@@ -6,10 +6,16 @@ Two route groups over one shared Honcho client:
   (e.g. mcpo). Endpoint summaries/descriptions are what the model sees.
 - **Internal** (``/internal/*``, excluded from schema): recall/save for the Filter. Fail-open.
 
-Identity (workspace / subject / observation mode) is resolved centrally from request headers
-(``X-Honcho-User-Email``, ``X-Honcho-Peer``, ``X-Honcho-Workspace``,
-``X-Honcho-Observation-Mode``, ``X-Honcho-Chat-Id``) with optional body overrides; see
-``identity.resolve``. Open WebUI templates ``{{USER_EMAIL}}``/``{{CHAT_ID}}`` into the headers.
+Identity & auth are transport-injected, NOT model arguments: the ``Authorization`` bearer and the
+``X-Honcho-*`` headers are read from the raw request and are deliberately kept OUT of the OpenAPI
+schema (no header ``parameters``, no identity fields in the request bodies). This keeps each tool's
+model-facing signature clean (only the meaningful args) — Open WebUI's OpenAPI->tool parser skips
+tools whose params it can't map, and nullable header params are exactly the kind it trips on.
+
+Open WebUI supplies identity via the tool-server connection: Bearer = ``TOOL_SERVER_API_KEY`` and
+Custom Headers ``X-Honcho-User-Email={{USER_EMAIL}}`` / ``X-Honcho-Chat-Id={{CHAT_ID}}``. The
+Filter additionally sends ``X-Honcho-Peer`` / ``-Workspace`` / ``-Observation-Mode`` when a valve
+overrides them. See ``identity.resolve``.
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from . import honcho_service as svc
@@ -33,13 +39,13 @@ app = FastAPI(
 )
 
 
-# --- auth ------------------------------------------------------------------
-def require_auth(authorization: Annotated[str | None, Header()] = None) -> None:
+# --- auth (read from the raw header; never a documented tool parameter) ------
+def require_auth(request: Request) -> None:
     """Optional bearer protection. No-op when TOOL_SERVER_API_KEY is unset."""
     expected = get_settings().tool_server_api_key
     if not expected:
         return
-    if authorization != f"Bearer {expected}":
+    if request.headers.get("authorization") != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="invalid or missing bearer token")
 
 
@@ -51,7 +57,7 @@ def _client() -> HonchoClient:
     return HonchoClient(get_settings())
 
 
-# --- identity from headers -------------------------------------------------
+# --- identity from request headers (kept out of the OpenAPI schema) ----------
 @dataclass
 class ReqHeaders:
     peer: str | None
@@ -61,40 +67,26 @@ class ReqHeaders:
     chat_id: str | None
 
 
-def req_headers(
-    x_honcho_peer: Annotated[str | None, Header()] = None,
-    x_honcho_workspace: Annotated[str | None, Header()] = None,
-    x_honcho_observation_mode: Annotated[str | None, Header()] = None,
-    x_honcho_user_email: Annotated[str | None, Header()] = None,
-    x_honcho_chat_id: Annotated[str | None, Header()] = None,
-) -> ReqHeaders:
+def req_headers(request: Request) -> ReqHeaders:
+    h = request.headers
     return ReqHeaders(
-        peer=x_honcho_peer,
-        workspace=x_honcho_workspace,
-        observation_mode=x_honcho_observation_mode,
-        user_email=x_honcho_user_email,
-        chat_id=x_honcho_chat_id,
+        peer=h.get("x-honcho-peer"),
+        workspace=h.get("x-honcho-workspace"),
+        observation_mode=h.get("x-honcho-observation-mode"),
+        user_email=h.get("x-honcho-user-email"),
+        chat_id=h.get("x-honcho-chat-id"),
     )
 
 
 HeadersDep = Annotated[ReqHeaders, Depends(req_headers)]
 
 
-class _Overrides(BaseModel):
-    """Optional per-call identity overrides (headers are the primary source)."""
-
-    workspace: str | None = Field(None, description="Override the Honcho workspace.")
-    peer: str | None = Field(None, description="Override the subject peer.")
-    observation_mode: str | None = Field(None, description="'unified' or 'directional'.")
-
-
-def _identity(h: ReqHeaders, body: _Overrides | None = None) -> Identity:
-    b = body or _Overrides()
+def _identity(h: ReqHeaders) -> Identity:
     return resolve(
-        workspace=b.workspace or h.workspace,
-        peer=b.peer or h.peer,
+        workspace=h.workspace,
+        peer=h.peer,
         user_email=h.user_email,
-        observation_mode=b.observation_mode or h.observation_mode,
+        observation_mode=h.observation_mode,
     )
 
 
@@ -108,46 +100,42 @@ def _guard(fn):
         raise HTTPException(status_code=502, detail=f"honcho error: {e}") from e
 
 
-# --- request models --------------------------------------------------------
-class SearchRequest(_Overrides):
+# --- request models (model-facing args only; identity comes from headers) ----
+class SearchRequest(BaseModel):
     query: str = Field(..., description="What to search the user's memory for.")
     scope: str = Field("workspace", description="'workspace' (all history, default) or 'session'.")
     limit: int = Field(5, ge=1, le=50)
 
 
-class ChatRequest(_Overrides):
+class ChatRequest(BaseModel):
     query: str = Field(..., description="A natural-language question about the user.")
     reasoning_level: str = Field("medium", description="minimal | low | medium | high | max")
 
 
-class CreateConclusionRequest(_Overrides):
+class CreateConclusionRequest(BaseModel):
     content: str = Field(..., description="A single durable, self-contained fact about the user.")
 
 
-class ListConclusionsRequest(_Overrides):
+class ListConclusionsRequest(BaseModel):
     page: int = Field(1, ge=1)
     size: int = Field(25, ge=1, le=100)
 
 
-class ContextRequest(_Overrides):
+class ContextRequest(BaseModel):
     max_conclusions: int = Field(25, ge=1, le=100)
 
 
-class RepresentationRequest(_Overrides):
-    pass
-
-
-# --- health ----------------------------------------------------------------
+# --- health ------------------------------------------------------------------
 @app.get("/health", include_in_schema=False)
 def health() -> dict:
     return {"status": "ok"}
 
 
-# --- model tools -----------------------------------------------------------
+# --- model tools -------------------------------------------------------------
 @app.post("/search", summary="Search the user's memory", operation_id="honcho_search")
 def search(req: SearchRequest, _: AuthDep, h: HeadersDep) -> dict:
     """Semantic search over what is remembered about the user (messages)."""
-    ident = _identity(h, req)
+    ident = _identity(h)
     return _guard(
         lambda: svc.tool_search(
             _client(), ident, req.query, scope=req.scope, limit=req.limit, chat_id=h.chat_id
@@ -158,7 +146,7 @@ def search(req: SearchRequest, _: AuthDep, h: HeadersDep) -> dict:
 @app.post("/chat", summary="Ask a dialectic question about the user", operation_id="honcho_chat")
 def chat(req: ChatRequest, _: AuthDep, h: HeadersDep) -> dict:
     """Ask Honcho to reason about the user (dialectic). Use for 'what does the user prefer/know?'."""
-    ident = _identity(h, req)
+    ident = _identity(h)
     return _guard(
         lambda: svc.tool_chat(_client(), ident, req.query, reasoning_level=req.reasoning_level)
     )
@@ -171,7 +159,7 @@ def chat(req: ChatRequest, _: AuthDep, h: HeadersDep) -> dict:
 )
 def create_conclusion(req: CreateConclusionRequest, _: AuthDep, h: HeadersDep) -> dict:
     """Save one durable, self-contained fact about the user. Check existing memory first."""
-    ident = _identity(h, req)
+    ident = _identity(h)
     return _guard(lambda: svc.tool_create_conclusion(_client(), ident, req.content))
 
 
@@ -182,7 +170,7 @@ def create_conclusion(req: CreateConclusionRequest, _: AuthDep, h: HeadersDep) -
 )
 def list_conclusions(req: ListConclusionsRequest, _: AuthDep, h: HeadersDep) -> dict:
     """Review saved conclusions. Use before creating one to avoid duplicates, or to find an id."""
-    ident = _identity(h, req)
+    ident = _identity(h)
     return _guard(lambda: svc.tool_list_conclusions(_client(), ident, page=req.page, size=req.size))
 
 
@@ -202,7 +190,7 @@ def delete_conclusion(conclusion_id: str, _: AuthDep, h: HeadersDep) -> dict:
 )
 def get_context(req: ContextRequest, _: AuthDep, h: HeadersDep) -> dict:
     """Get the user's representation + profile card (what is currently known about them)."""
-    ident = _identity(h, req)
+    ident = _identity(h)
     return _guard(
         lambda: svc.tool_get_context(_client(), ident, max_conclusions=req.max_conclusions)
     )
@@ -213,13 +201,13 @@ def get_context(req: ContextRequest, _: AuthDep, h: HeadersDep) -> dict:
     summary="Get the user's representation",
     operation_id="honcho_get_representation",
 )
-def get_representation(req: RepresentationRequest, _: AuthDep, h: HeadersDep) -> dict:
-    """Lighter-weight than honcho_get_context: just the representation string."""
-    ident = _identity(h, req)
+def get_representation(_: AuthDep, h: HeadersDep) -> dict:
+    """Lighter-weight than honcho_get_context: just the representation string. Takes no arguments."""
+    ident = _identity(h)
     return _guard(lambda: svc.tool_get_representation(_client(), ident))
 
 
-# --- internal (Filter) -----------------------------------------------------
+# --- internal (Filter) -------------------------------------------------------
 class RecallRequest(BaseModel):
     last_user_message: str | None = None
 
